@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lab Color Scanner Pro</title>
+    <style>
+        body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        video { width: 100%; height: 100%; object-fit: cover; background: #222; }
+        
+        /* 開始ボタン（Android/iOSのオートプレイ制限対策） */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 100;
+            display: flex; align-items: center; justify-content: center;
+            flex-direction: column;
+        }
+        #start-btn {
+            padding: 20px 40px; font-size: 1.2rem; background: #00ffcc; color: #000;
+            border: none; border-radius: 50px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 0 20px rgba(0,255,204,0.4);
+        }
+
+        #target {
+            position: absolute; top: 50%; left: 50%; width: 40px; height: 40px;
+            border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%);
+            z-index: 10; pointer-events: none;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        #target::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px; background: red; border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #panel {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 20px;
+            min-width: 280px; text-align: center; pointer-events: none;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .val-group { display: flex; justify-content: space-around; margin-bottom: 10px; }
+        .val-item { display: flex; flex-direction: column; }
+        .val { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; color: #00ffcc; }
+        .label { font-size: 12px; color: #aaa; margin-bottom: 2px; }
+        #rgb-val { font-size: 12px; opacity: 0.6; font-family: monospace; }
+    </style>
+</head>
+<body>
+
+<div id="start-overlay">
+    <h2 style="margin-bottom:20px;">Color Analysis Tool</h2>
+    <button id="start-btn">カメラを起動して開始</button>
+    <p style="font-size:12px; color:#666; margin-top:15px;">※HTTPS環境でのみ動作します</p>
+</div>
+
+<div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div id="target"></div>
+    <div id="panel">
+        <div class="val-group">
+            <div class="val-item"><span class="label">L* (明度)</span><span id="l-val" class="val">-</span></div>
+            <div class="val-item"><span class="label">a* (赤-緑)</span><span id="a-val" class="val">-</span></div>
+            <div class="val-item"><span class="label">b* (黄-青)</span><span id="b-val" class="val">-</span></div>
+        </div>
+        <div id="rgb-val">RGB: - , - , -</div>
+    </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const startOverlay = document.getElementById('start-overlay');
+const startBtn = document.getElementById('start-btn');
+
+async function startCamera() {
+    const constraints = {
+        video: { 
+            facingMode: "environment", 
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+        },
+        audio: false
+    };
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        
+        await video.play();
+        
+        // キャンバスサイズをビデオの解像度に一度だけ合わせる
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        startOverlay.style.display = 'none';
+        requestAnimationFrame(updateLoop);
+    } catch (err) {
+        console.error("Camera Error:", err);
+        alert("エラー: カメラにアクセスできません。\n設定 > プライバシー > カメラ でブラウザの権限が許可されているか確認してください。");
+    }
+}
+
+startBtn.addEventListener('click', startCamera);
+
+function updateLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        // ビデオフレームをキャンバスに描画
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // 中央のピクセル情報を取得
+        const centerX = Math.floor(canvas.width / 2);
+        const centerY = Math.floor(canvas.height / 2);
+        
+        // ノイズ軽減のため、中心周辺の平均値を取得（1x1だと数値が跳ねやすいため）
+        const pixelData = ctx.getImageData(centerX, centerY, 1, 1).data;
+        const r = pixelData[0];
+        const g = pixelData[1];
+        const b = pixelData[2];
+        
+        const lab = rgbToLab(r, g, b);
+
+        // 画面表示の更新
+        document.getElementById('l-val').textContent = lab[0].toFixed(1);
+        document.getElementById('a-val').textContent = lab[1].toFixed(1);
+        document.getElementById('b-val').textContent = lab[2].toFixed(1);
+        document.getElementById('rgb-val').textContent = `RGB: ${r}, ${g}, ${b}`;
+    }
+    requestAnimationFrame(updateLoop);
+}
+
+/**
+ * RGBからCIE Labへの変換
+ * 観察条件: D65 (常用光源)
+ */
+function rgbToLab(r, g, b) {
+    // 1. RGBを[0, 1]に正規化し、ガンマ補正を解除 (sRGB -> Linear RGB)
+    let [R, G, B] = [r, g, b].map(v => {
+        v /= 255;
+        return v > 0.04045 ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92;
+    });
+
+    // 2. Linear RGB -> XYZ変換 (D65光源)
+    let X = (R * 0.4124 + G * 0.3576 + B * 0.1805);
+    let Y = (R * 0.2126 + G * 0.7152 + B * 0.0722);
+    let Z = (R * 0.0193 + G * 0.1192 + B * 0.9505);
+
+    // 3. XYZを正規化 (D65基準値: X=95.047, Y=100.0, Z=108.883)
+    X /= 0.95047;
+    Y /= 1.00000;
+    Z /= 1.08883;
+
+    // 4. XYZ -> Lab変換
+    const f = t => t > 0.008856 ? Math.pow(t, 1/3) : (7.787 * t) + (16/116);
+    
+    const L = (116 * f(Y)) - 16;
+    const a = 500 * (f(X) - f(Y));
+    const b_lab = 200 * (f(Y) - f(Z));
+
+    return [L, a, b_lab];
+}
+</script>
+</body>
+</html>
