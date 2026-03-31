@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lab Color Scanner with Calibration</title>
+    <style>
+        body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        video { width: 100%; height: 100%; object-fit: cover; background: #222; }
+        
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 100;
+            display: flex; align-items: center; justify-content: center;
+            flex-direction: column;
+        }
+        #start-btn {
+            padding: 20px 40px; font-size: 1.2rem; background: #00ffcc; color: #000;
+            border: none; border-radius: 50px; font-weight: bold; cursor: pointer;
+            box-shadow: 0 0 20px rgba(0,255,204,0.4);
+        }
+
+        #target {
+            position: absolute; top: 50%; left: 50%; width: 40px; height: 40px;
+            border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%);
+            z-index: 10; pointer-events: none;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        #target::after {
+            content: ''; position: absolute; top: 50%; left: 50%;
+            width: 4px; height: 4px; background: red; border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        #panel {
+            position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 20px;
+            min-width: 300px; text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .val-group { display: flex; justify-content: space-around; margin-bottom: 15px; }
+        .val-item { display: flex; flex-direction: column; }
+        .val { font-size: 28px; font-weight: bold; font-family: 'Courier New', monospace; color: #00ffcc; }
+        .label { font-size: 12px; color: #aaa; margin-bottom: 2px; }
+        
+        #calib-btn {
+            background: #fff; color: #000; border: none; padding: 10px 20px;
+            border-radius: 10px; font-weight: bold; cursor: pointer; font-size: 14px;
+            pointer-events: auto; margin-bottom: 10px;
+        }
+        #calib-btn:active { background: #ccc; }
+        #calib-status { font-size: 10px; color: #00ffcc; margin-top: 5px; opacity: 0.8; }
+        #rgb-val { font-size: 12px; opacity: 0.6; font-family: monospace; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div id="start-overlay">
+    <h2 style="margin-bottom:20px;">Color Analysis Tool</h2>
+    <button id="start-btn">カメラを起動して開始</button>
+</div>
+
+<div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div id="target"></div>
+    <div id="panel">
+        <button id="calib-btn">白を校正 (100, 0, 0)</button>
+        <div id="calib-status">未校正</div>
+        
+        <div class="val-group">
+            <div class="val-item"><span class="label">L*</span><span id="l-val" class="val">-</span></div>
+            <div class="val-item"><span class="label">a*</span><span id="a-val" class="val">-</span></div>
+            <div class="val-item"><span class="label">b*</span><span id="b-val" class="val">-</span></div>
+        </div>
+        <div id="rgb-val">RGB: - , - , -</div>
+    </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const startOverlay = document.getElementById('start-overlay');
+const startBtn = document.getElementById('start-btn');
+const calibBtn = document.getElementById('calib-btn');
+const calibStatus = document.getElementById('calib-status');
+
+// 校正用のオフセット値
+let offsetL = 0;
+let offsetA = 0;
+let offsetB = 0;
+let isCalibrated = false;
+
+// キャリブレーション時の一時的な最新値
+let currentLab = [0, 0, 0];
+
+async function startCamera() {
+    const constraints = {
+        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+    };
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        await video.play();
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        startOverlay.style.display = 'none';
+        requestAnimationFrame(updateLoop);
+    } catch (err) {
+        alert("カメラエラー: HTTPS接続と権限を確認してください。");
+    }
+}
+
+startBtn.addEventListener('click', startCamera);
+
+// 校正ボタンの処理
+calibBtn.addEventListener('click', () => {
+    if (currentLab[0] === 0) return;
+    
+    // 現在の測定値を「L=100, a=0, b=0」にするためのオフセットを計算
+    offsetL = 100 - currentLab[0];
+    offsetA = 0 - currentLab[1];
+    offsetB = 0 - currentLab[2];
+    
+    isCalibrated = true;
+    calibStatus.textContent = `校正済み (L補正: ${offsetL.toFixed(1)})`;
+    calibBtn.textContent = "再校正する";
+});
+
+function updateLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const centerX = Math.floor(canvas.width / 2);
+        const centerY = Math.floor(canvas.height / 2);
+        
+        // 中心点のRGB取得
+        const p = ctx.getImageData(centerX, centerY, 1, 1).data;
+        
+        // 1. 素のLab値を計算
+        const rawLab = rgbToLab(p[0], p[1], p[2]);
+        currentLab = rawLab; // キャリブレーション用に保持
+
+        // 2. 校正値を適用
+        let finalL = rawLab[0] + offsetL;
+        let finalA = rawLab[1] + offsetA;
+        let finalB = rawLab[2] + offsetB;
+
+        // 表示の更新
+        document.getElementById('l-val').textContent = finalL.toFixed(1);
+        document.getElementById('a-val').textContent = finalA.toFixed(1);
+        document.getElementById('b-val').textContent = finalB.toFixed(1);
+        document.getElementById('rgb-val').textContent = `RGB: ${p[0]}, ${p[1]}, ${p[2]}`;
+    }
+    requestAnimationFrame(updateLoop);
+}
+
+function rgbToLab(r, g, b) {
+    let [R, G, B] = [r, g, b].map(v => {
+        v /= 255;
+        return v > 0.04045 ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92;
+    });
+    let X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+    let Y = (R * 0.2126 + G * 0.7152 + B * 0.0722) / 1.00000;
+    let Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+    const f = t => t > 0.008856 ? Math.pow(t, 1/3) : (7.787 * t) + (16/116);
+    return [(116 * f(Y)) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))];
+}
+</script>
+</body>
+</html>
