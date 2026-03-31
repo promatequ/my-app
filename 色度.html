@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Android Lab Scanner Fix</title>
+    <style>
+        body { margin: 0; background: #000; font-family: sans-serif; color: white; overflow: hidden; }
+        #container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        video { width: 100%; height: 100%; object-fit: cover; background: #222; }
+        
+        /* 開始ボタン（これがないとAndroidでは起動しません） */
+        #start-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 100;
+            display: flex; align-items: center; justify-content: center;
+        }
+        #start-btn {
+            padding: 20px 40px; font-size: 1.2rem; background: #00ffcc; color: #000;
+            border: none; border-radius: 50px; font-weight: bold; cursor: pointer;
+        }
+
+        #target {
+            position: absolute; top: 50%; left: 50%; width: 30px; height: 30px;
+            border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%);
+            z-index: 10; pointer-events: none;
+        }
+        #panel {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7); padding: 15px; border-radius: 15px;
+            min-width: 250px; text-align: center; pointer-events: none;
+        }
+        .val { font-size: 22px; font-weight: bold; font-family: monospace; color: #00ffcc; margin: 0 5px; }
+        .label { font-size: 11px; color: #aaa; }
+    </style>
+</head>
+<body>
+
+<div id="start-overlay">
+    <button id="start-btn">カメラを起動する</button>
+</div>
+
+<div id="container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div id="target"></div>
+    <div id="panel">
+        <div>
+            <span class="label">L*:</span><span id="l-val" class="val">-</span>
+            <span class="label">a*:</span><span id="a-val" class="val">-</span>
+            <span class="label">b*:</span><span id="b-val" class="val">-</span>
+        </div>
+        <div style="font-size:10px; margin-top:8px; opacity:0.6;">RGB: <span id="rgb-val">-</span></div>
+    </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+const startOverlay = document.getElementById('start-overlay');
+const startBtn = document.getElementById('start-btn');
+
+// カメラ起動処理
+async function startCamera() {
+    const constraints = {
+        video: { 
+            facingMode: "environment", // 背面カメラ
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+        },
+        audio: false
+    };
+
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        
+        // Android/Chrome 対策: play() の完了を待つ
+        await video.play();
+        
+        startOverlay.style.display = 'none'; // 成功したらボタンを消す
+        requestAnimationFrame(updateLoop);
+    } catch (err) {
+        console.error("Camera Error:", err);
+        alert("エラー: カメラにアクセスできません。\n1. HTTPSで接続しているか\n2. ブラウザの設定でカメラが許可されているか\nを確認してください。");
+    }
+}
+
+// ボタンクリックで開始
+startBtn.addEventListener('click', startCamera);
+
+function updateLoop() {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const x = Math.floor(canvas.width / 2);
+        const y = Math.floor(canvas.height / 2);
+        const p = ctx.getImageData(x, y, 1, 1).data;
+        
+        const lab = rgbToLab(p[0], p[1], p[2]);
+
+        document.getElementById('l-val').textContent = lab[0].toFixed(1);
+        document.getElementById('a-val').textContent = lab[1].toFixed(1);
+        document.getElementById('b-val').textContent = lab[2].toFixed(1);
+        document.getElementById('rgb-val').textContent = `${p[0]}, ${p[1]}, ${p[2]}`;
+    }
+    requestAnimationFrame(updateLoop);
+}
+
+// --- Lab変換ロジック ---
+function rgbToLab(r, g, b) {
+    let [R, G, B] = [r, g, b].map(v => {
+        v /= 255;
+        return v > 0.04045 ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92;
+    });
+    const X = (R * 0.4124 + G * 0.3576 + B * 0.1805) / 0.95047;
+    const Y = (R * 0.2126 + G * 0.7152 + B * 0.0722) / 1.00000;
+    const Z = (R * 0.0193 + G * 0.1192 + B * 0.9505) / 1.08883;
+    const f = t => t > 0.008856 ? Math.pow(t, 1/3) : (7.787 * t) + (16/116);
+    return [(116 * f(Y)) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))];
+}
+</script>
+</body>
+</html>
