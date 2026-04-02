@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI手相占い - 高速調整版</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background-color: #f0f2f5; color: #2c3e50; padding: 20px; margin: 0; }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h1 { color: #1a2a6c; margin-bottom: 10px; font-size: 1.8em; }
+        .description { font-size: 0.9em; color: #7f8c8d; margin-bottom: 20px; }
+        .btn { display: inline-block; background: linear-gradient(135deg, #1a2a6c, #b21f1f); color: #fff; padding: 12px 24px; border-radius: 30px; cursor: pointer; font-size: 1em; font-weight: bold; border: none; margin: 5px; }
+        .btn-analyze { background: #27ae60; width: 80%; margin-top: 20px; font-size: 1.2em; }
+        
+        #loading { display: none; margin: 20px 0; color: #b21f1f; font-weight: bold; }
+        
+        canvas { max-width: 100%; height: auto; border: 2px solid #ecf0f1; border-radius: 10px; margin-top: 20px; display: none; background: #000; }
+        #result { text-align: left; background: #fdfdfd; padding: 20px; border-radius: 10px; border-left: 5px solid #1a2a6c; margin-top: 25px; display: none; }
+        #controls { display: none; margin: 20px 0; background: #f8f9fa; padding: 15px; border-radius: 10px; }
+        input[type="range"] { width: 80%; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>✋ AI 手相感度調整</h1>
+    <p class="description">撮影後、掌線が白く（または黒く）見えるよう調整してください</p>
+    
+    <label class="btn">
+        写真を撮影・選択する
+        <input type="file" accept="image/*" capture="environment" id="imageInput" style="display:none;">
+    </label>
+
+    <div id="loading">✨ 処理中... ✨</div>
+
+    <div id="controls">
+        <label>感度調整: <span id="contrastVal">128</span></label><br>
+        <input type="range" id="contrastSlider" min="0" max="255" value="128">
+        <p style="font-size: 11px; color: #666;">※スライダーを動かすとリアルタイムに変化します</p>
+        <button class="btn btn-analyze" id="analyzeBtn">🔮 この状態で鑑定する</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+    <div id="result"></div>
+</div>
+
+<script id="worker-script" type="text/javascript-worker">
+    self.onmessage = function(e) {
+        const { imageData, width, height, threshold, doStats } = e.data;
+        const data = imageData.data;
+        const len = data.length;
+        
+        // 処理の高速化のため、新しいバッファを作成せず元のデータを加工（破壊的処理）
+        for (let i = 0; i < len; i += 4) {
+            const avg = (data[i] + data[i+1] + data[i+2]) / 3;
+            // 掌線が白く見えるように（thresholdより暗いところを白くする設定も可能ですが、通常は反転）
+            const val = avg < threshold ? 255 : 0; 
+            data[i] = data[i+1] = data[i+2] = val;
+        }
+
+        let stats = null;
+        if (doStats) {
+            stats = { total: len / 4, lines: 0 };
+            for (let i = 0; i < len; i += 4) {
+                if (data[i] === 255) stats.lines++;
+            }
+        }
+
+        self.postMessage({ imageData, stats, doStats });
+    };
+</script>
+
+<script>
+    const imageInput = document.getElementById('imageInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const resultDiv = document.getElementById('result');
+    const controlsDiv = document.getElementById('controls');
+    const loadingDiv = document.getElementById('loading');
+    const contrastSlider = document.getElementById('contrastSlider');
+    const contrastVal = document.getElementById('contrastVal');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+
+    let currentImg = null;
+    let isWorking = false; // Workerが動作中かどうかのフラグ
+    let requestUpdate = false; // 次の更新リクエストがあるか
+
+    const blob = new Blob([document.getElementById('worker-script').textContent], {type: 'text/javascript'});
+    const worker = new Worker(URL.createObjectURL(blob));
+
+    // 画像読み込み
+    imageInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        loadingDiv.style.display = 'block';
+        const img = new Image();
+        img.onload = () => {
+            currentImg = img;
+            processImage(false);
+            loadingDiv.style.display = 'none';
+            controlsDiv.style.display = 'block';
+            canvas.style.display = 'block';
+        };
+        img.src = URL.createObjectURL(file);
+    });
+
+    // スライダー操作（リアルタイム）
+    contrastSlider.addEventListener('input', () => {
+        contrastVal.textContent = contrastSlider.value;
+        if (!isWorking) {
+            processImage(false);
+        } else {
+            requestUpdate = true; // Workerが忙しい時は予約だけする
+        }
+    });
+
+    // 鑑定ボタン
+    analyzeBtn.addEventListener('click', () => {
+        loadingDiv.style.display = 'block';
+        processImage(true);
+    });
+
+    worker.onmessage = function(e) {
+        isWorking = false;
+        const { imageData, stats, doStats } = e.data;
+        ctx.putImageData(imageData, 0, 0);
+
+        if (doStats) {
+            loadingDiv.style.display = 'none';
+            showFortune(stats);
+        } else if (requestUpdate) {
+            requestUpdate = false;
+            processImage(false); // 予約されていた更新を実行
+        }
+    };
+
+    function processImage(doStats) {
+        if (!currentImg) return;
+        isWorking = true;
+
+        // 処理負荷を下げるためにサイズを制限（最大幅600px）
+        const scale = Math.min(1, 600 / Math.max(currentImg.width, currentImg.height));
+        const w = currentImg.width * scale;
+        const h = currentImg.height * scale;
+
+        // 回転を考慮してキャンバスサイズを決定（90度回転：幅と高さを入れ替え）
+        canvas.width = h;
+        canvas.height = w;
+
+        ctx.save();
+        ctx.translate(canvas.width/2, canvas.height/2);
+        ctx.rotate(-90 * Math.PI / 180); // 反時計回り90度
+        ctx.drawImage(currentImg, -w/2, -h/2, w, h);
+        ctx.restore();
+
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        worker.postMessage({
+            imageData: imageData,
+            width: canvas.width,
+            height: canvas.height,
+            threshold: parseInt(contrastSlider.value),
+            doStats: doStats
+        });
+    }
+
+    function showFortune(stats) {
+        resultDiv.style.display = 'block';
+        const lineRate = (stats.lines / stats.total * 100).toFixed(1);
+        resultDiv.innerHTML = `
+            <h2>鑑定結果</h2>
+            <p><strong>掌線の明瞭度:</strong> ${lineRate}%</p>
+            <p>解析の結果、あなたの手相からは強い生命エネルギーが感じられます。調整後の画像で白く見えている線が、現在のあなたの運勢の通り道です。</p>
+        `;
+    }
+</script>
+</body>
+</html>
