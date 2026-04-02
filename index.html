@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI手相占い - プレミアム掌線鑑定版</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background-color: #f0f2f5; color: #2c3e50; padding: 20px; margin: 0; }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h1 { color: #1a2a6c; margin-bottom: 10px; font-size: 1.8em; }
+        .description { font-size: 0.9em; color: #7f8c8d; margin-bottom: 20px; }
+        .btn { display: inline-block; background: linear-gradient(135deg, #1a2a6c, #b21f1f); color: #fff; padding: 15px 30px; border-radius: 30px; cursor: pointer; font-size: 1.1em; font-weight: bold; transition: transform 0.2s, box-shadow 0.2s; border: none; }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
+        canvas { max-width: 100%; height: auto; border: 2px solid #ecf0f1; border-radius: 10px; margin-top: 20px; display: none; }
+        #result { text-align: left; background: #fdfdfd; padding: 20px; border-radius: 10px; border-left: 5px solid #1a2a6c; margin-top: 25px; display: none; box-shadow: inset 0 0 10px rgba(0,0,0,0.05); }
+        #controls { display: none; margin: 20px 0; background: #f8f9fa; padding: 15px; border-radius: 10px; }
+        .slider-label { display: block; margin-bottom: 10px; font-weight: bold; }
+        .line-result { margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .line-title { font-weight: bold; color: #b21f1f; display: flex; align-items: center; }
+        .line-title::before { content: '◆'; margin-right: 8px; font-size: 0.8em; }
+        .analysis-tag { display: inline-block; background: #34495e; color: white; padding: 2px 10px; border-radius: 20px; font-size: 0.75em; margin-left: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>✋ AI プレミアム手相鑑定</h1>
+    <p class="description">掌線の走行・密度を解析し、伝統的な手相学に基づいた診断を行います</p>
+    
+    <label class="btn">
+        手のひらを撮影・解析する
+        <input type="file" accept="image/*" capture="environment" id="imageInput" style="display:none;">
+    </label>
+
+    <div id="controls">
+        <label class="slider-label">線描出感度調整: <span id="contrastVal">120</span>%</label>
+        <input type="range" id="contrastSlider" min="50" max="300" value="120">
+    </div>
+
+    <canvas id="canvas"></canvas>
+    <div id="result"></div>
+</div>
+
+<script>
+    const imageInput = document.getElementById('imageInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const resultDiv = document.getElementById('result');
+    const controlsDiv = document.getElementById('controls');
+    const contrastSlider = document.getElementById('contrastSlider');
+    const contrastVal = document.getElementById('contrastVal');
+
+    let currentImg = null;
+
+    imageInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const img = new Image();
+            img.onload = () => {
+                currentImg = img;
+                processImage();
+                controlsDiv.style.display = 'block';
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    contrastSlider.addEventListener('input', function() {
+        contrastVal.textContent = this.value;
+        if (currentImg) processImage();
+    });
+
+    function processImage() {
+        if (!currentImg) return;
+        const MAX_WIDTH = 800;
+        let width = currentImg.width;
+        let height = currentImg.height;
+        if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+        canvas.width = width; canvas.height = height;
+        ctx.drawImage(currentImg, 0, 0, width, height);
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        const grayscale = new Uint8ClampedArray(width * height);
+        for (let i = 0; i < data.length; i += 4) {
+            grayscale[i / 4] = 0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2];
+        }
+
+        const sobelData = new Uint8ClampedArray(width * height * 4);
+        const threshold = (100 * 100) / parseInt(contrastSlider.value);
+        
+        let stats = { life: 0, head: 0, heart: 0, fate: 0, total: 0 };
+
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const idx = (y * width + x);
+                const valX = grayscale[idx+1] - grayscale[idx-1];
+                const valY = grayscale[idx+width] - grayscale[idx-width];
+                const magnitude = Math.sqrt(valX * valX + valY * valY);
+                
+                const isLine = magnitude > threshold;
+                const pixelVal = isLine ? 20 : 255; // 線を濃いグレーで描画
+                const index = idx * 4;
+                sobelData[index] = sobelData[index+1] = sobelData[index+2] = pixelVal;
+                sobelData[index+3] = 255;
+
+                if (isLine) {
+                    stats.total++;
+                    // エリア判定（より詳細な区分け）
+                    if (x < width * 0.45 && y > height * 0.35) stats.life++;       // 親指側弧状（生命線）
+                    else if (y > height * 0.4 && y < height * 0.65) stats.head++;  // 中央横断（知能線）
+                    else if (y < height * 0.45) stats.heart++;                    // 上部横断（感情線）
+                    
+                    // 運命線（中央を縦に貫く線）の判定
+                    if (x > width * 0.4 && x < width * 0.6 && y > height * 0.2) stats.fate++;
+                }
+            }
+        }
+        ctx.putImageData(new ImageData(sobelData, width, height), 0, 0);
+        canvas.style.display = 'block';
+        generateDetailedFortune(stats, width * height);
+    }
+
+    function generateDetailedFortune(stats, totalPixels) {
+        const ratios = {
+            life: (stats.life / totalPixels) * 100,
+            head: (stats.head / totalPixels) * 100,
+            heart: (stats.heart / totalPixels) * 100,
+            fate: (stats.fate / totalPixels) * 100,
+            all: (stats.total / totalPixels) * 100
+        };
+
+        let html = "<h2 style='text-align:center; color:#1a2a6c;'>鑑定書</h2>";
+
+        // 生命線（Life Line）
+        html += `<div class="line-result"><div class="line-title">生命線<span class="analysis-tag">${ratios.life > 2.0 ? '力強い' : '繊細'}</span></div>`;
+        if (ratios.life > 2.0) {
+            html += "親指の付け根を囲
