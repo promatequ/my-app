@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>掌の静脈パターン抽出（疑似）</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        h1 {
+            font-size: 1.2rem;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+        }
+        input[type="file"] {
+            padding: 10px;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            width: 100%;
+            max-width: 300px;
+        }
+        canvas {
+            max-width: 100%;
+            border: 1px solid #999;
+            background-color: #fff;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-width: 300px;
+        }
+        label {
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>静脈パターン抽出ツール</h1>
+    
+    <div class="container">
+        <!-- スマホのカメラを起動、またはギャラリーから選択 -->
+        <input type="file" id="imageInput" accept="image/*" capture="environment">
+        
+        <div class="controls">
+            <label for="contrastSlider">コントラスト強調:</label>
+            <input type="range" id="contrastSlider" min="1" max="10" value="4" step="0.5">
+        </div>
+
+        <p>処理結果</p>
+        <canvas id="outputCanvas"></canvas>
+    </div>
+
+    <script>
+        const imageInput = document.getElementById('imageInput');
+        const outputCanvas = document.getElementById('outputCanvas');
+        const ctx = outputCanvas.getContext('2d');
+        const contrastSlider = document.getElementById('contrastSlider');
+
+        let originalImage = new Image();
+
+        // 画像が選択・撮影されたときの処理
+        imageInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                originalImage.onload = function() {
+                    processImage();
+                }
+                originalImage.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        });
+
+        // スライダーが動いたときに再処理
+        contrastSlider.addEventListener('input', function() {
+            if (originalImage.src) {
+                processImage();
+            }
+        });
+
+        // 画像処理メイン関数
+        function processImage() {
+            // スマホの巨大な画像を適切に縮小（最大幅800px）
+            const MAX_WIDTH = 800;
+            let width = originalImage.width;
+            let height = originalImage.height;
+
+            if (width > MAX_WIDTH) {
+                height = Math.floor(height * (MAX_WIDTH / width));
+                width = MAX_WIDTH;
+            }
+
+            outputCanvas.width = width;
+            outputCanvas.height = height;
+
+            // 一旦元の画像を描画
+            ctx.drawImage(original
