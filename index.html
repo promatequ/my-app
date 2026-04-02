@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI手相鑑定 - 輪郭抽出による掌線強調</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background-color: #f0f2f5; color: #2c3e50; padding: 20px; margin: 0; }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h1 { color: #1a2a6c; margin-bottom: 10px; font-size: 1.8em; }
+        .description { font-size: 0.9em; color: #7f8c8d; margin-bottom: 20px; }
+        .btn { display: inline-block; background: linear-gradient(135deg, #1a2a6c, #b21f1f); color: #fff; padding: 12px 24px; border-radius: 30px; cursor: pointer; font-size: 1em; font-weight: bold; border: none; margin: 5px; }
+        .btn-analyze { background: #27ae60; width: 80%; margin-top: 20px; font-size: 1.2em; }
+        
+        #loading { display: none; margin: 20px 0; color: #b21f1f; font-weight: bold; }
+        
+        canvas { max-width: 100%; height: auto; border: 2px solid #ecf0f1; border-radius: 10px; margin-top: 20px; display: none; background-color: black; }
+        #result { text-align: left; background: #fdfdfd; padding: 20px; border-radius: 10px; border-left: 5px solid #1a2a6c; margin-top: 25px; display: none; }
+        #controls { display: none; margin: 20px 0; background: #f8f9fa; padding: 15px; border-radius: 10px; }
+        input[type="range"] { width: 80%; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>✋ AI 掌線強調手相鑑定</h1>
+    <p class="description">撮影後、掌線が白くくっきり見えるようにスライダー（感度）を調整してください。</p>
+    
+    <label class="btn">
+        写真を撮影・選択する
+        <input type="file" accept="image/*" capture="environment" id="imageInput" style="display:none;">
+    </label>
+
+    <div id="loading">✨ 処理中... ✨</div>
+
+    <div id="controls">
+        <label>抽出感度（しきい値）: <span id="contrastVal">50</span></label><br>
+        <p style="font-size: 0.8em; color: #7f8c8d; margin: 5px 0;">(小: 小さな段差も検知, 大: はっきりした段差のみ検知)</p>
+        <input type="range" id="contrastSlider" min="10" max="150" value="50">
+        <button class="btn btn-analyze" id="analyzeBtn">🔮 この状態で鑑定を開始</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+    <div id="result"></div>
+</div>
+
+<script id="worker-script" type="text/javascript-worker">
+    self.onmessage = function(e) {
+        const { imageData, width, height, threshold, doStats } = e.data;
+        const src = imageData.data;
+        
+        // 1. グレースケール化
+        const gray = new Uint8Array(width * height);
+        for (let i = 0; i < src.length; i += 4) {
+            // Luminance formula
+            gray[i / 4] = src[i] * 0.299 + src[i+1] * 0.587 + src[i+2] * 0.114;
+        }
+
+        // 2. エッジ検出 (Sobelフィルタ)
+        const outputBuffer = new Uint8ClampedArray(width * height * 4);
+        let stats = { life: 0, head: 0, heart: 0 };
+        
+        // 境界を除く全ピクセルをスキャン
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const idx = y * width + x;
+                
+                // Sobelカーネル演算
+                // 水平方向 (Gx)
+                // [-1, 0, 1]
+                // [-2, 0, 2]
+                // [-1, 0, 1]
+                const pixelX = (
+                    -1 * gray[((y - 1) * width) + (x - 1)] + 1 * gray[((y - 1) * width) + (x + 1)] +
+                    -2 * gray[(y * width) + (x - 1)]       + 2 * gray[(y * width) + (x + 1)] +
+                    -1 * gray[((y + 1) * width) + (x - 1)] + 1 * gray[((y + 1) * width) + (x + 1)]
+                );
+
+                // 垂直方向 (Gy)
+                // [-1, -2, -1]
+                // [ 0,  0,  0]
+                // [ 1,  2,  1]
+                const pixelY = (
+                    -1 * gray[((y - 1) * width) + (x - 1)] - 2 * gray[((y - 1) * width) + x] - 1 * gray[((y - 1) * width) + (x + 1)] +
+                    1 * gray[((y + 1) * width) + (x - 1)] + 2 * gray[((y + 1) * width) + x] + 1 * gray[((y + 1) * width) + (x + 1)]
+                );
+
+                // 勾配強度 (エッジの強さ) を計算
+                const magnitude = Math.sqrt(pixelX * pixelX + pixelY * pixelY);
+                
+                // 3. しきい値処理 (エッジなら白、それ以外は黒)
+                const isEdge = magnitude > threshold;
+                const color = isEdge ? 255 : 0; // 線を白にする
+
+                const outIdx = idx * 4;
+                outputBuffer[outIdx] = outputBuffer[outIdx+1] = outputBuffer[outIdx+2] = color;
+                outputBuffer[outIdx+3] = 255; // Alpha
+
+                // 4. 統計 (鑑定用) - 線(白)をカウント
+                if (doStats && isEdge) {
+                    // 簡易エリア判定 (縦持ち画像前提: 上が指、下が手首)
+                    const relY = y / height;
+                    const relX = x / width;
+
+                    if (relY < 0.35) {
+                        stats.heart++; // 上部: 感情線
+                    } else if (relY >= 0.35 && relY < 0.6) {
+                        stats.head++;  // 中部: 知能線
+                    } else if (relY >= 0.6 && relX < 0.6) {
+                        stats.life++;  // 下部親指側: 生命線
+                    }
+                }
+            }
+        }
+        
+        self.postMessage({ output: outputBuffer, stats, doStats }, [outputBuffer.buffer]);
+    };
+</script>
+
+<script>
+    const imageInput = document.getElementById('imageInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const resultDiv = document.getElementById('result');
+    const controlsDiv = document.getElementById('controls');
+    const loadingDiv = document.getElementById('loading');
+    const contrastSlider = document.getElementById('contrastSlider');
+    const contrastVal = document.getElementById('contrastVal');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+
+    let currentImg = null;
+    let isProcessing = false;
+    let pendingRequest = false;
+
+    // Workerの初期化
+    const blob = new Blob([document.getElementById('worker-script').textContent], {type: 'text/javascript'});
+    const worker = new Worker(URL.createObjectURL(blob));
+
+    // Workerからの結果受取
+    worker.onmessage = function(e) {
+        const { output, stats, doStats } = e.data;
+        const imgData = new ImageData(output, canvas.width, canvas.height);
+        ctx.putImageData(imgData, 0, 0);
+        
+        isProcessing = false;
+        loadingDiv.style.display = 'none';
+        canvas.style.display = 'block';
+
+        if (doStats) {
+            showResult(stats);
+        } else if (pendingRequest) {
+            pendingRequest = false;
+            processImage(false); // 待機中のリクエストがあれば実行
+        }
+    };
+
+    imageInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        loadingDiv.style.display = 'block';
+        resultDiv.style.display = 'none';
+        
+        const img = new Image();
+        img.onload = () => {
+            currentImg = img;
+            controlsDiv.style.display = 'block';
+            processImage(false); // 初回描画
+        };
+        img.src = URL.createObjectURL(file);
+    });
+
+    // スライダー調整 (inputイベントでリアルタイム反映)
+    contrastSlider.addEventListener('input', () => {
+        contrastVal.textContent = contrastSlider.value;
+        if (currentImg) {
+            if (!isProcessing) {
+                processImage(false);
+            } else {
+                pendingRequest = true; // 処理中ならフラグを立てる
+            }
+        }
+    });
+
+    // 鑑定ボタンクリック
+    analyzeBtn.addEventListener('click', () => {
+        if (!currentImg) return;
+        loadingDiv.style.display = 'block';
+        resultDiv.style.display = 'none';
+        // 統計処理フラグをtrueにしてWorkerに送る
+        processImage(true);
+    });
+
+    function processImage(doStats) {
+        if (!currentImg) return;
+        isProcessing = true;
