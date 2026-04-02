@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI手相鑑定 - 掌線抽出特化版</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #f4f7f6; margin: 0; padding: 20px; }
+        .container { max-width: 500px; margin: 0 auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        canvas { width: 100%; height: auto; border-radius: 8px; display: none; background: #000; margin-top: 15px; }
+        .btn { background: #1a2a6c; color: white; padding: 12px 20px; border-radius: 25px; cursor: pointer; display: inline-block; font-weight: bold; margin: 10px 0; border: none; }
+        #controls { display: none; padding: 15px; background: #eee; border-radius: 10px; margin-top: 10px; }
+        input[type="range"] { width: 90%; margin: 10px 0; }
+        .guide-text { font-size: 0.85em; color: #e67e22; font-weight: bold; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>✋ AI 掌線抽出鑑定</h1>
+    <p class="guide-text">スライダーを右に動かすと、細かい線まで抽出されます</p>
+
+    <label class="btn">
+        📷 手のひらを撮影する
+        <input type="file" accept="image/*" capture="environment" id="imageInput" style="display:none;">
+    </label>
+
+    <div id="controls">
+        <label>抽出強度: <span id="val">10</span></label><br>
+        <input type="range" id="slider" min="1" max="50" value="10">
+        <button class="btn" style="background:#27ae60; width:100%;" onclick="location.reload()">🔄 やり直す</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+    <div id="result" style="display:none; margin-top:20px; padding:15px; background:#f9f9f9; border-radius:10px;">
+        <h3>鑑定結果</h3>
+        <p>抽出された掌線の密度から、あなたの現在のバイタリティを解析しました。線がはっきり見えるほど、運気が明快な状態です。</p>
+    </div>
+</div>
+
+<script>
+    const imageInput = document.getElementById('imageInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const slider = document.getElementById('slider');
+    const valDisp = document.getElementById('val');
+    const controls = document.getElementById('controls');
+
+    let grayData = null; 
+    let width, height;
+    let isDrawing = false;
+
+    imageInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const img = new Image();
+        img.onload = () => {
+            setupCanvas(img);
+            controls.style.display = 'block';
+            canvas.style.display = 'block';
+            document.getElementById('result').style.display = 'block';
+            updateImage(); 
+        };
+        img.src = URL.createObjectURL(file);
+    });
+
+    function setupCanvas(img) {
+        const MAX_SIZE = 400; // 処理速度優先で少し小さめに設定
+        let w = img.width;
+        let h = img.height;
+        const scale = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+        w *= scale; h *= scale;
+
+        // 反時計回り90度回転
+        canvas.width = h;
+        canvas.height = w;
+        width = canvas.width;
+        height = canvas.height;
+
+        ctx.save();
+        ctx.translate(width/2, height/2);
+        ctx.rotate(-90 * Math.PI / 180);
+        ctx.drawImage(img, -w/2, -h/2, w, h);
+        ctx.restore();
+
+        // 輝度情報の抽出（グレースケール化）
+        const raw = ctx.getImageData(0, 0, width, height);
+        grayData = new Uint8Array(width * height);
+        for (let i = 0; i < raw.data.length; i += 4) {
+            grayData[i/4] = raw.data[i] * 0.3 + raw.data[i+1] * 0.59 + raw.data[i+2] * 0.11;
+        }
+    }
+
+    slider.addEventListener('input', () => {
+        valDisp.textContent = slider.value;
+        if (!isDrawing) {
+            isDrawing = true;
+            requestAnimationFrame(() => {
+                updateImage();
+                isDrawing = false;
+            });
+        }
+    });
+
+    /**
+     * 新ロジック：簡易版ハイパスフィルタ（差分抽出）
+     * 自分の輝度と、周囲の平均輝度を比較して「周囲より暗い」場所だけを白くする。
+     */
+    function updateImage() {
+        if (!grayData) return;
+        const offset = parseInt(slider.value);
+        const imgData = ctx.createImageData(width, height);
+        const data = imgData.data;
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = y * width + x;
+                
+                // 周囲の画素と比較（簡易的なエッジ・線抽出）
+                // 4つ隣の画素との差分を見ることで、太い線も拾いやすくする
+                const compareIdx = (y > 4 && x > 4) ? (y - 4) * width + (x - 4) : idx;
+                const diff = grayData[compareIdx] - grayData[idx];
+
+                // 周囲より「offset」以上暗ければ掌線（白）とする
+                const v = diff > offset ? 255 : 0;
+
+                const outIdx = idx * 4;
+                data[outIdx] = data[outIdx+1] = data[outIdx+2] = v;
+                data[outIdx+3] = 255;
+            }
+        }
+        ctx.putImageData(imgData, 0, 0);
+    }
+</script>
+
+</body>
+</html>
