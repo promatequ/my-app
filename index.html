@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI手相鑑定 - 輪郭抽出による掌線強調</title>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; text-align: center; background-color: #f0f2f5; color: #2c3e50; padding: 20px; margin: 0; }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        h1 { color: #1a2a6c; margin-bottom: 10px; font-size: 1.8em; }
+        .description { font-size: 0.9em; color: #7f8c8d; margin-bottom: 20px; }
+        .btn { display: inline-block; background: linear-gradient(135deg, #1a2a6c, #b21f1f); color: #fff; padding: 12px 24px; border-radius: 30px; cursor: pointer; font-size: 1em; font-weight: bold; border: none; margin: 5px; }
+        .btn-analyze { background: #27ae60; width: 80%; margin-top: 20px; font-size: 1.2em; }
+        
+        #loading { display: none; margin: 20px 0; color: #b21f1f; font-weight: bold; }
+        
+        canvas { max-width: 100%; height: auto; border: 2px solid #ecf0f1; border-radius: 10px; margin-top: 20px; display: none; background-color: black; }
+        #result { text-align: left; background: #fdfdfd; padding: 20px; border-radius: 10px; border-left: 5px solid #1a2a6c; margin-top: 25px; display: none; }
+        #controls { display: none; margin: 20px 0; background: #f8f9fa; padding: 15px; border-radius: 10px; }
+        input[type="range"] { width: 80%; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>✋ AI 掌線強調手相鑑定</h1>
+    <p class="description">撮影後、掌線が白くくっきり見えるようにスライダー（感度）を調整してください。</p>
+    
+    <label class="btn">
+        写真を撮影・選択する
+        <input type="file" accept="image/*" capture="environment" id="imageInput" style="display:none;">
+    </label>
+
+    <div id="loading">✨ 処理中... ✨</div>
+
+    <div id="controls">
+        <label>抽出感度（しきい値）: <span id="contrastVal">50</span></label><br>
+        <p style="font-size: 0.8em; color: #7f8c8d; margin: 5px 0;">(小: 小さな段差も検知, 大: はっきりした段差のみ検知)</p>
+        <input type="range" id="contrastSlider" min="10" max="150" value="50">
+        <button class="btn btn-analyze" id="analyzeBtn">🔮 この状態で鑑定を開始</button>
+    </div>
+
+    <canvas id="canvas"></canvas>
+    <div id="result"></div>
+</div>
+
+<script id="worker-script" type="text/javascript-worker">
+    self.onmessage = function(e) {
