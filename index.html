@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI簡易手相占い</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            text-align: center;
+            background-color: #f4f4f9;
+            color: #333;
+            padding: 20px;
+            margin: 0;
+        }
+        h1 { font-size: 1.5em; }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .btn {
+            display: inline-block;
+            background-color: #007bff;
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            margin-bottom: 20px;
+            transition: background 0.3s;
+        }
+        .btn:hover { background-color: #0056b3; }
+        canvas {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        #result {
+            font-size: 1.1em;
+            line-height: 1.6;
+            text-align: left;
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        #loading {
+            display: none;
+            color: #007bff;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>✋ スマホで手相占い</h1>
+    <p>手のひらを明るい場所で撮影してください</p>
+    
+    <label class="btn">
+        カメラで撮影 / 画像を選択
+        <input type="file" accept="image/*" capture="environment" id="imageInput">
+    </label>
+
+    <div id="loading">手相を解析中...</div>
+    <canvas id="canvas"></canvas>
+    <div id="result"></div>
+</div>
+
+<script>
+    const imageInput = document.getElementById('imageInput');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const resultDiv = document.getElementById('result');
+    const loadingDiv = document.getElementById('loading');
+
+    imageInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        resultDiv.style.display = 'none';
+        canvas.style.display = 'none';
+        loadingDiv.style.display = 'block';
+
+        const img = new Image();
+        const reader = new FileReader();
+
+        reader.onload = function(event) {
+            img.onload = function() {
+                processImage(img);
+            }
+            img.src = event.target.result;
+        }
+        reader.readAsDataURL(file);
+    });
+
+    function processImage(img) {
+        const MAX_WIDTH = 600;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+
+        // 1. グレースケール化と同時に明るさの最小値・最大値を取得
+        let minGray = 255;
+        let maxGray = 0;
+        const rawGrayscale = new Float32Array(width * height);
+        
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            rawGrayscale[i / 4] = gray;
+            if (gray < minGray) minGray = gray;
+            if (gray > maxGray) maxGray = gray;
+        }
+
+        // 2. コントラストストレッチング（白飛び防止のため明暗を正規化）
+        const grayscale = new Uint8ClampedArray(width * height);
+        const range = maxGray - minGray || 1; // 0除算防止
+        for (let i = 0; i < rawGrayscale.length; i++) {
+            grayscale[i] = ((rawGrayscale[i] - minGray) / range) * 255;
+        }
+
+        const sobelData = new Uint8ClampedArray(data.length);
+        const kernelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+        const kernelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+
+        const magnitudes = new Float32Array(width * height);
+        let sumMagnitude = 0;
+        let count = 0;
+
+        // 3. Sobelフィルタによるエッジ強度の計算
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                let pixelX = 0;
+                let pixelY = 0;
+
+                for (let j = -1; j <= 1; j++) {
